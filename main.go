@@ -2,8 +2,10 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 
@@ -30,13 +32,43 @@ func main() {
 		log.Fatalf("missing env var: %s", UploadPathEnvVar)
 	}
 
-	err = filepath.Walk(uploadPath, newFileAdder(ipfs))
+	addHandler := NewAddHandler(ipfs, uploadPath)
+	http.Handle("/add", addHandler)
+	log.Fatal(http.ListenAndServe(":9999", nil))
+}
+
+type AddResult struct {
+	Path string `json:"path"`
+	CID  string `json:"cid"`
+	Err  error  `json:"err,omitempty"`
+}
+
+type AddHandler struct {
+	ipfs       *httpapi.HttpApi
+	uploadPath string
+}
+
+func NewAddHandler(ipfs *httpapi.HttpApi, uploadPath string) AddHandler {
+	return AddHandler{ipfs, uploadPath}
+}
+
+func (h AddHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	var results []AddResult
+	err := filepath.Walk(h.uploadPath, newFileAdder(h.ipfs, &results))
 	if err != nil {
-		log.Fatalf("error walking upload path: %v", err)
+		log.Printf("error walking upload path: %v", err)
+	}
+	resBytes, err := json.Marshal(results)
+	if err != nil {
+		log.Printf("error marshaling json %v in AddHandler: %v", results, err)
+	}
+	n, err := fmt.Fprintf(w, "%s", resBytes)
+	if err != nil {
+		log.Printf("error writing AddHandler response after %d bytes written: %v", n, err)
 	}
 }
 
-func newFileAdder(ipfs *httpapi.HttpApi) func(path string, info os.FileInfo, err error) error {
+func newFileAdder(ipfs *httpapi.HttpApi, results *[]AddResult) func(path string, info os.FileInfo, err error) error {
 	return func(path string, info os.FileInfo, err error) error {
 		if err != nil {
 			return fmt.Errorf("error accessing path %q: %w", path, err)
@@ -57,7 +89,7 @@ func newFileAdder(ipfs *httpapi.HttpApi) func(path string, info os.FileInfo, err
 			return fmt.Errorf("error adding file %q: %w", path, err)
 		}
 
-		fmt.Println(path, res.Cid())
+		*results = append(*results, AddResult{path, res.Cid().String(), nil})
 		return nil
 	}
 }

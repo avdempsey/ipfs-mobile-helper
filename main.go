@@ -5,11 +5,14 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 
 	"github.com/ipfs/go-ipfs-files"
 	"github.com/ipfs/go-ipfs-http-client"
 	ma "github.com/multiformats/go-multiaddr"
 )
+
+const UploadPathEnvVar = "IPFS_MOBILE_HELPER_UPLOAD_PATH"
 
 func main() {
 	addr, err := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/5001")
@@ -22,25 +25,39 @@ func main() {
 		log.Fatalf("could not create ipfs client: %v", err)
 	}
 
-	filepath := os.Getenv("IPFS_MOBILE_HELPER_TEST_FILE")
-	if filepath == "" {
-		log.Fatalf("missing env var: IPFS_MOBILE_HELPER_TEST_FILE")
+	uploadPath := os.Getenv(UploadPathEnvVar)
+	if uploadPath == "" {
+		log.Fatalf("missing env var: %s", UploadPathEnvVar)
 	}
 
-	stat, err := os.Stat(filepath)
+	err = filepath.Walk(uploadPath, newFileAdder(ipfs))
 	if err != nil {
-		log.Fatalf("could not stat file: %q because of err: %v", filepath, err)
+		log.Fatalf("error walking upload path: %v", err)
 	}
+}
 
-	node, err := files.NewSerialFile(filepath, false, stat)
-	if err != nil {
-		log.Fatalf("could not create new serial file: %v", err)
-	}
+func newFileAdder(ipfs *httpapi.HttpApi) func(path string, info os.FileInfo, err error) error {
+	return func(path string, info os.FileInfo, err error) error {
+		if err != nil {
+			return fmt.Errorf("error accessing path %q: %w", path, err)
+		}
 
-	ctx := context.Background()
-	res, err := ipfs.Unixfs().Add(ctx, node)
-	if err != nil {
-		log.Fatalf("error adding file: %v", err)
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+
+		node, err := files.NewSerialFile(path, false, info)
+		if err != nil {
+			return fmt.Errorf("could not create new serial file from %q: %w", path, err)
+		}
+
+		ctx := context.Background()
+		res, err := ipfs.Unixfs().Add(ctx, node)
+		if err != nil {
+			return fmt.Errorf("error adding file %q: %w", path, err)
+		}
+
+		fmt.Println(path, res.Cid())
+		return nil
 	}
-	fmt.Println(res.Cid())
 }

@@ -16,24 +16,13 @@ import (
 	ma "github.com/multiformats/go-multiaddr"
 )
 
-const UploadPathEnvVar = "IPFS_MOBILE_HELPER_UPLOAD_PATH"
+const (
+	UploadPathEnvVar           = "IPFS_MOBILE_HELPER_UPLOAD_PATH"
+	UploadPathSingleNodeSuffix = "single"
+	UploadPathClusterSuffix    = "cluster"
+)
 
 func main() {
-	clusterCfg := &ipfsCluster.Config{}
-	cluster, err := ipfsCluster.NewDefaultClient(clusterCfg)
-	if err != nil {
-		log.Fatalf("could not create ipfs-cluster client: %v", err)
-	}
-
-	ctx := context.Background()
-	addChan := make(chan *api.AddedOutput)
-	testPaths := []string{"cluster_test.txt"}
-	go cluster.Add(ctx, testPaths, api.DefaultAddParams(), addChan)
-	select {
-	case res := <-addChan:
-		log.Printf("cluster add res: %+v", res)
-	}
-
 	addr, err := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/5001")
 	if err != nil {
 		log.Fatalf("could not make NewMultiaddr: %v", err)
@@ -49,9 +38,82 @@ func main() {
 		log.Fatalf("missing env var: %s", UploadPathEnvVar)
 	}
 
+	clusterCfg := &ipfsCluster.Config{}
+	cluster, err := ipfsCluster.NewDefaultClient(clusterCfg)
+	if err != nil {
+		log.Fatalf("could not create ipfs-cluster client: %v", err)
+	}
+
 	addHandler := NewAddHandler(ipfs, uploadPath)
 	http.Handle("/add", addHandler)
+
+	clusterAddHandler := NewClusterAddHandler(cluster, uploadPath)
+	http.Handle("/cluster/add", clusterAddHandler)
+
 	log.Fatal(http.ListenAndServe(":9999", nil))
+}
+
+type ClusterAddHandler struct {
+	client     ipfsCluster.Client
+	uploadPath string
+}
+
+func NewClusterAddHandler(client ipfsCluster.Client, uploadPath string) ClusterAddHandler {
+	return ClusterAddHandler{
+		client:     client,
+		uploadPath: filepath.Join(uploadPath, UploadPathClusterSuffix),
+	}
+}
+
+func (h ClusterAddHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
+	var addPaths []string
+	err := filepath.Walk(h.uploadPath, func(path string, info os.FileInfo, err error) error {
+		if !info.Mode().IsRegular() {
+			return nil
+		}
+		addPaths = append(addPaths, path)
+		return nil
+	})
+	if err != nil {
+		log.Printf("error walking upload path %q: %v", h.uploadPath, err)
+		w.WriteHeader(500)
+		return
+	}
+
+	ctx := context.Background()
+	addChan := make(chan *api.AddedOutput)
+	errChan := make(chan error)
+	var results []*api.AddedOutput
+	go func() {
+		errChan <- h.client.Add(ctx, addPaths, api.DefaultAddParams(), addChan)
+	}()
+	for {
+		select {
+		case res := <-addChan:
+			if res == nil {
+				continue
+			}
+			log.Printf("cluster add res: %+v", res)
+			results = append(results, res)
+		case err := <-errChan:
+			if err != nil {
+				log.Printf("error calling cluster Add: %v", err)
+				w.WriteHeader(500)
+				return
+			}
+			resBytes, err := json.Marshal(results)
+			if err != nil {
+				log.Printf("error marshaling json %v in ClusterAddHandler: %v", results, err)
+				w.WriteHeader(500)
+				return
+			}
+			n, err := fmt.Fprint(w, string(resBytes))
+			if err != nil {
+				log.Printf("error writing ClusterAddHandler respsonse after %d bytes written: %v", n, err)
+			}
+			return
+		}
+	}
 }
 
 type AddResult struct {
@@ -66,20 +128,27 @@ type AddHandler struct {
 }
 
 func NewAddHandler(ipfs *httpapi.HttpApi, uploadPath string) AddHandler {
-	return AddHandler{ipfs, uploadPath}
+	return AddHandler{
+		ipfs:       ipfs,
+		uploadPath: filepath.Join(uploadPath, UploadPathSingleNodeSuffix),
+	}
 }
 
 func (h AddHandler) ServeHTTP(w http.ResponseWriter, _ *http.Request) {
 	var results []AddResult
 	err := filepath.Walk(h.uploadPath, newFileAdder(h.ipfs, &results))
 	if err != nil {
-		log.Printf("error walking upload path: %v", err)
+		log.Printf("error walking upload path %q: %v", h.uploadPath, err)
+		w.WriteHeader(500)
+		return
 	}
 	resBytes, err := json.Marshal(results)
 	if err != nil {
 		log.Printf("error marshaling json %v in AddHandler: %v", results, err)
+		w.WriteHeader(500)
+		return
 	}
-	n, err := fmt.Fprintf(w, "%s", resBytes)
+	n, err := fmt.Fprint(w, string(resBytes))
 	if err != nil {
 		log.Printf("error writing AddHandler response after %d bytes written: %v", n, err)
 	}

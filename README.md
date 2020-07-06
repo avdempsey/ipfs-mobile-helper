@@ -16,3 +16,12 @@ I wanted to create as a weekend project a minimally viable process to easily sha
 - [x] This app checks the upload directory for new files
 - [x] This app uses an IPFS client to tell the IPFS daemon running on the server to add the file
 - [x] This app returns the CID to the Shortcut
+
+### Even Better, Let's Share Files to an IPFS Cluster:
+
+- [x] First, figure out how to just share to a single IPFS node
+- [x] Set up an IPFS cluster
+- [x] Test adding a file to the cluster manually
+- [x] Add a file to the cluster programmatically via the ipfs-cluster client when this app starts up
+- [ ] Move cluster adder from start-up to new http route (I can choose to share a file from my iPhone to an individual node, or to my cluster)
+- [ ] Add option to encrypt files before adding them to the cluster

@@ -11,12 +11,29 @@ import (
 
 	"github.com/ipfs/go-ipfs-files"
 	"github.com/ipfs/go-ipfs-http-client"
+	"github.com/ipfs/ipfs-cluster/api"
+	ipfsCluster "github.com/ipfs/ipfs-cluster/api/rest/client"
 	ma "github.com/multiformats/go-multiaddr"
 )
 
 const UploadPathEnvVar = "IPFS_MOBILE_HELPER_UPLOAD_PATH"
 
 func main() {
+	clusterCfg := &ipfsCluster.Config{}
+	cluster, err := ipfsCluster.NewDefaultClient(clusterCfg)
+	if err != nil {
+		log.Fatalf("could not create ipfs-cluster client: %v", err)
+	}
+
+	ctx := context.Background()
+	addChan := make(chan *api.AddedOutput)
+	testPaths := []string{"cluster_test.txt"}
+	go cluster.Add(ctx, testPaths, api.DefaultAddParams(), addChan)
+	select {
+	case res := <-addChan:
+		log.Printf("cluster add res: %+v", res)
+	}
+
 	addr, err := ma.NewMultiaddr("/ip4/127.0.0.1/tcp/5001")
 	if err != nil {
 		log.Fatalf("could not make NewMultiaddr: %v", err)

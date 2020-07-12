@@ -10,6 +10,8 @@ This is a baby step towards what I really want: an InterGenerational Archive for
 
 ### The Process
 
+#### Demo - https://youtu.be/_oecLoDLzbY
+
 - [x] Hit the share button on a file on your iPhone
 - [x] Use the Shortcut "Add to IPFS"
 - [x] The Shortcut uses Secure ShellFish (the app needs to be installed on the device) to SFTP the file to a web server
